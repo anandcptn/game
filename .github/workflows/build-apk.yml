@@ -2,18 +2,22 @@ name: Build APK
 
 on:
   push:
-    branches: [ main ]
-  workflow_dispatch: {}
+    branches:
+      - master
+      - main
+  workflow_dispatch:
 
 jobs:
   build:
     runs-on: ubuntu-22.04
+
     steps:
-      - uses: actions/checkout@v4
+      - name: Checkout repository
+        uses: actions/checkout@v4
 
       - name: Build with Buildozer
-        uses: ArtemSBulgakov/buildozer-action@v1
         id: buildozer
+        uses: ArtemSBulgakov/buildozer-action@v1
         with:
           workdir: .
           buildozer_version: stable
