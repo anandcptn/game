@@ -94,9 +94,18 @@ class Bird(Widget):
 
 
 class Pipe:
-    """A top/bottom pipe pair, drawn manually (not a Widget, for speed)."""
+    """A top/bottom pipe pair, drawn manually (not a Widget, for speed).
 
-    def __init__(self, canvas_group, texture, x, gap_center, gap, scale):
+    The gap position is stored as a FRACTION of the play area (0..1), not an
+    absolute pixel value, and re-derived from the current offset_y/design_h
+    every time it's drawn. This matters because on Android the true window
+    size can settle slightly after launch (system bars / immersive mode),
+    triggering a resize with a different offset_y/design_h. Storing an
+    absolute pixel gap_center would go stale in that case, leaving a visible
+    gap between the pipe and the ground.
+    """
+
+    def __init__(self, canvas_group, texture, x, gap_fraction, gap, scale, offset_y, design_h):
         self.texture = texture
         tw, th = texture.size
         self.w = tw * scale
@@ -104,7 +113,7 @@ class Pipe:
         self.gap = gap
         self.scale = scale
         self.x = x
-        self.gap_center = gap_center
+        self.gap_fraction = gap_fraction
         self.scored = False
 
         with canvas_group:
@@ -113,11 +122,15 @@ class Pipe:
             self.bottom_rect = Rectangle(texture=texture, pos=(x, 0), size=(self.w, self.h))
             # top pipe (flipped vertically) - negative-size trick, no texture-region API needed
             self.top_rect = Rectangle(texture=texture, pos=(x, 0), size=(self.w, -self.h))
-        self.set_positions()
+        self.set_positions(offset_y, design_h)
 
-    def set_positions(self):
-        bottom_y = self.gap_center - self.gap / 2 - self.h
-        top_y = self.gap_center + self.gap / 2
+    def _gap_center(self, offset_y, design_h):
+        return offset_y + design_h * self.gap_fraction
+
+    def set_positions(self, offset_y, design_h):
+        gap_center = self._gap_center(offset_y, design_h)
+        bottom_y = gap_center - self.gap / 2 - self.h
+        top_y = gap_center + self.gap / 2
         self.bottom_rect.pos = (self.x, bottom_y)
         self.bottom_rect.size = (self.w, self.h)
         # Negative height flips the texture; anchor pos at the TOP of the
@@ -125,17 +138,18 @@ class Pipe:
         self.top_rect.pos = (self.x, top_y + self.h)
         self.top_rect.size = (self.w, -self.h)
 
-    def move(self, dx):
+    def move(self, dx, offset_y, design_h):
         self.x += dx
-        self.set_positions()
+        self.set_positions(offset_y, design_h)
 
     def remove(self, canvas_group):
         canvas_group.remove(self.bottom_rect)
         canvas_group.remove(self.top_rect)
 
-    def get_rects(self):
-        bottom_y = self.gap_center - self.gap / 2 - self.h
-        top_y = self.gap_center + self.gap / 2
+    def get_rects(self, offset_y, design_h):
+        gap_center = self._gap_center(offset_y, design_h)
+        bottom_y = gap_center - self.gap / 2 - self.h
+        top_y = gap_center + self.gap / 2
         return [
             (self.x, bottom_y, self.w, self.h),
             (self.x, top_y, self.w, self.h),
@@ -341,17 +355,16 @@ class GameWidget(FloatLayout):
             self._add_pipe(start_x + i * PIPE_SPACING * self.scale)
 
     def _add_pipe(self, x):
-        gap_center = random.uniform(
-            self.offset_y + self.design_h * 0.3,
-            self.offset_y + self.design_h * 0.75,
-        )
+        gap_fraction = random.uniform(0.3, 0.75)
         pipe = Pipe(
             self.pipes_canvas.canvas,
             self.pipe_texture,
             x,
-            gap_center,
+            gap_fraction,
             PIPE_GAP * self.scale,
             self.scale,
+            self.offset_y,
+            self.design_h,
         )
         self.pipes.append(pipe)
 
@@ -363,7 +376,7 @@ class GameWidget(FloatLayout):
             p.w = tw * self.scale
             p.h = th * self.scale
             p.gap = PIPE_GAP * self.scale
-            p.set_positions()
+            p.set_positions(self.offset_y, self.design_h)
 
     # ------------------------------------------------------------------
     def update(self, dt):
@@ -398,7 +411,7 @@ class GameWidget(FloatLayout):
             # move pipes
             dx = -PIPE_SPEED * self.scale * dt
             for p in self.pipes:
-                p.move(dx)
+                p.move(dx, self.offset_y, self.design_h)
 
             # score + recycle
             for p in self.pipes:
@@ -441,7 +454,7 @@ class GameWidget(FloatLayout):
         pad = 4 * self.scale
         bird_rect = (bx + pad, by + pad, bw - 2 * pad, bh - 2 * pad)
         for p in self.pipes:
-            for (px, py, pw, ph) in p.get_rects():
+            for (px, py, pw, ph) in p.get_rects(self.offset_y, self.design_h):
                 if self._overlap(bird_rect, (px, py, pw, ph)):
                     self._die()
                     return
